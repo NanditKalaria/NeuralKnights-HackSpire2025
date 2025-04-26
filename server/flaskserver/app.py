@@ -56,6 +56,7 @@ from agno.models.groq import Groq
 from agno.tools.duckduckgo import DuckDuckGoTools
 from groq import Groq
 import time
+import requests
 
 app = Flask(__name__)
 SECRET_KEY = "quick" 
@@ -90,6 +91,8 @@ groq_model = ChatGroq(
 )
 
 groq_chat_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+os.environ["SERPER_API_KEY"] = "85a684d9cfcddab4886460954ef36f054053529b"
 
 def get_and_enhance_transcript(youtube_url, model_type='gemini'):
     try:
@@ -311,8 +314,90 @@ def chat_with_transcript():
     except Exception as e:
         return jsonify({'error': f'An error occurred: {str(e)}'}), 500
 
-
+# Function to interact with LLaMA API
+def llama_generate_recommendations(prompt):
+    try:
+        llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            temperature=0,
+            groq_api_key=os.getenv("GROQ_API_KEY")
+        )
+        
+        response = llm.invoke(prompt)
+        
+        if hasattr(response, 'content'):
+            return response.content
+        else:
+            return "Error: No content in response"
+    except Exception as e:
+        return f"Error connecting to Groq API: {e}"
  
+ 
+ 
+import json
+
+@app.route('/getonly', methods=['GET'])
+@validate_token_middleware()
+def get_recommendations():
+    user_id = request.user_id  # Extract user ID from the token
+    
+    try:
+        # Fetch user statistics from Redis
+        statistics = redis_client.hget(f"student:{user_id}", "statistics")
+        
+        if not statistics:
+            return jsonify({"message": "No statistics found for the provided user."}), 404
+        
+        # Convert JSON string to Python dictionary
+        topics_data = json.loads(statistics)
+
+        if not topics_data:
+            return jsonify({"message": "No topics found for the provided user."}), 404
+
+        # Extract only topic names
+        topics_list = list(topics_data.keys())
+
+        # Format recommendations prompt
+        prompt = f"""
+        Act as an intelligent recommendation generator. Based on the topics provided, generate a structured JSON response 
+        with an overview, recommendations, and five YouTube video URLs for each topic. Ensure the output is in strict JSON 
+        format without markdown or extra formatting. Use the following JSON structure:
+        {{
+            "topics": {{
+                "<topic_name>": {{
+                    "overview": "<brief overview>",
+                    "recommendations": "<recommended steps to learn>",
+                    "youtube_links": [
+                        "<video_link_1>",
+                        "<video_link_2>",
+                        "<video_link_3>",
+                        "<video_link_4>",
+                        "<video_link_5>"
+                    ]
+                }}
+            }}
+        }}
+
+        The topics are: {', '.join(topics_list)}
+        """
+
+        # Generate recommendations
+        recommendations_raw = llama_generate_recommendations(prompt)
+
+        # Ensure the response is valid JSON
+        try:
+            recommendations = json.loads(recommendations_raw)
+        except json.JSONDecodeError:
+            return jsonify({"message": "Failed to parse AI response as JSON", "raw_response": recommendations_raw}), 500
+
+        return jsonify({
+            "message": "Recommendations generated successfully",
+            "recommendations": recommendations["topics"]  # Extract only relevant content
+        }), 200
+
+    except Exception as e:
+        print("Error:", str(e))
+        return jsonify({"message": f"An error occurred: {str(e)}"}), 500
 
 
 import faiss 
@@ -336,6 +421,7 @@ groq_sys_prompt = ChatPromptTemplate.from_template(
 import threading
 import time
 
+
 embedding_model = SentenceTransformer('multi-qa-mpnet-base-cos-v1')  # Pre-trained model for embeddings
 dimension = embedding_model.get_sentence_embedding_dimension()
 faiss_index = faiss.IndexFlatL2(dimension) 
@@ -352,8 +438,47 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = chroma_client.get_or_create_collection(name="pdf_documents")
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
+class TextToSpeechManager:
+    def __init__(self):
+        self.lock = threading.Lock()
+    
+    def speak(self, text):
+        try:
+            with self.lock:  # Ensure only one speech operation happens at a time
+                engine = None
+                try:
+                    engine = pyttsx3.init()
+                    engine.setProperty('rate', 150)
+                    engine.setProperty('volume', 1.0)
+                    engine.say(text)
+                    engine.runAndWait() 
+                    # print("spoke")
+                    engine.startLoop(False)  # Start the event loop without blocking
+                    engine.iterate()  # Process queued commands
+                    engine.endLoop()  # End the event loop
+                    logger.info("Speech completed successfully")
+                finally:
+                    if engine:
+                        try:
+                            engine.stop()
+                        except:
+                            pass
+                        del engine
+        except Exception as e:
+            logger.error(f"Text-to-speech error: {str(e)}")
+            
+    def start_speaking(self, text):
+        """Start a new thread for speaking"""
+        thread = Thread(target=self.speak, args=(text,))
+        thread.daemon = True  # Make thread daemon so it doesn't block program exit
+        thread.start()
+        return thread
 
+# Create a global instance of the TTS manager
+tts_manager = TextToSpeechManager()
 
 def clean_response(text):
     """Clean and format the LLM response."""
@@ -364,6 +489,9 @@ def clean_response(text):
     text = ' '.join(text.split())
     return text
 
+def speak_text(text):
+    """Convert text to speech using the TTS manager."""
+    tts_manager.speak(text)
 
 def extract_text_from_pdf(pdf_file):
     reader = PdfReader(pdf_file)
@@ -406,7 +534,26 @@ def upload_file():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
+@app.route("/test-audio", methods=["GET"])
+def test_audio():
+    try:
+        test_text = "This is a test of the text to speech system"
+        logger.info("Testing text-to-speech with test message")
+        
+        # Start speech in a new thread
+        speech_thread = tts_manager.start_speaking(test_text)
+        
+        return jsonify({
+            "message": "Audio test initiated",
+            "test_text": test_text,
+            "status": "Speech initiated"
+        })
+    except Exception as e:
+        logger.error(f"Audio test failed: {str(e)}")
+        return jsonify({
+            "error": "Audio test failed",
+            "details": str(e)
+        }), 500
 
 @app.route("/query", methods=["POST"])
 def query_file():
@@ -432,6 +579,11 @@ def query_file():
         response = genai.GenerativeModel("gemini-1.5-flash").generate_content(prompt)
         cleaned_response = clean_response(response.text)
         
+        # Add a small delay before starting new speech
+        time.sleep(0.1)  # 100ms delay
+        
+        speech_thread = tts_manager.start_speaking(cleaned_response)
+        
         return jsonify({
             "answer": cleaned_response,
             "voice_enabled": True,
@@ -440,6 +592,7 @@ def query_file():
         
     except Exception as e:
         error_message = f"Error processing query: {str(e)}"
+        logger.error(error_message)
         return jsonify({
             "error": error_message,
             "answer": "I apologize, but I encountered an error while processing your query. Please try again.",
@@ -447,7 +600,52 @@ def query_file():
         }), 500
 
 
+# # Configure text-to-speech settings (optional)
+# @app.route("/configure-voice", methods=["POST"])
+# def configure_voice():
+#     try:
+#         data = request.get_json()
+#         rate = data.get("rate", 110)  # Default speaking rate
+#         volume = data.get("volume", 1.0)  # Default volume
+#         voice_id = data.get("voice_id")  # Voice identifier
+        
+#         engine.setProperty('rate', rate)
+#         engine.setProperty('volume', volume)
+        
+#         if voice_id:
+#             voices = engine.getProperty('voices')
+#             for voice in voices:
+#                 if voice.id == voice_id:
+#                     engine.setProperty('voice', voice.id)
+#                     break
+        
+#         return jsonify({"message": "Voice settings updated successfully"}), 200
+#     except Exception as e:
+#         return jsonify({"error": f"Error configuring voice: {str(e)}"}), 500
 
+# Configure text-to-speech settings (optional)
+# @app.route("/configure-voice", methods=["POST"])
+# def configure_voice():
+#     try:
+#         data = request.get_json()
+#         rate = data.get("rate", 110)  # Default speaking rate
+#         volume = data.get("volume", 1.0)  # Default volume
+#         voice_id = data.get("voice_id")  # Voice identifier
+        
+#         engine.setProperty('rate', rate)
+#         engine.setProperty('volume', volume)
+        
+#         if voice_id:
+#             voices = engine.getProperty('voices')
+#             for voice in voices:
+#                 if voice.id == voice_id:
+#                     engine.setProperty('voice', voice.id)
+#                     break
+        
+#         return jsonify({"message": "Voice settings updated successfully"}), 200
+#     except Exception as e:
+#         return jsonify({"error": f"Error configuring voice: {str(e)}"}), 500
+# # MindMap
 
 def fetch_youtube_transcript(video_url):
     try:
@@ -1032,6 +1230,80 @@ def chat():
         })
         
     except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+def search_youtube_videos(topic, max_results=3):
+    url = "https://google.serper.dev/videos"
+    payload = {"q": f"{topic} tutorial"}
+    headers = {
+        "X-API-KEY": os.environ["SERPER_API_KEY"],
+        "Content-Type": "application/json"
+    }
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        
+        if "videos" not in data:
+            return []
+        
+        # Extract up to max_results URLs
+        urls = [video.get("link", "") for video in data.get("videos", [])[:max_results]]
+        return urls
+    except requests.RequestException as e:
+        print(f"Serper API error for {topic}: {e}")
+        return []
+
+def is_valid_youtube_url(url):
+    pattern = r'^(https?://(www\.)?youtube\.com/watch\?v=[\w-]{11}|https?://youtu\.be/[\w-]{11})'
+    return bool(re.match(pattern, url))
+
+@app.route('/youtube_videos', methods=['POST', 'OPTIONS'])
+def youtube_videos():
+    if request.method == 'OPTIONS':
+        return jsonify({'status': 'ok'}), 200
+
+    try:
+        data = request.json
+        if not data or 'topic' not in data:
+            return jsonify({
+                "success": False,
+                "error": "Missing 'topics' in JSON body"
+            }), 400
+        
+        topics = data['topic']
+        
+        # Convert single topic to list if needed
+        if isinstance(topics, str):
+            topics = [topics]
+        
+        if not isinstance(topics, list) or not topics:
+            return jsonify({
+                "success": False,
+                "error": "'topics' must be a non-empty list"
+            }), 400
+        
+        result = {}
+        for topic in topics:
+            video_urls = search_youtube_videos(topic, max_results=3)
+            valid_urls = [url for url in video_urls if is_valid_youtube_url(url)]
+            result[topic] = valid_urls[:3]
+        
+        return jsonify({
+            "success": True,
+            "data": result
+        })
+    
+    except ValueError as e:
+        return jsonify({
+            "success": False,
+            "error": "Invalid JSON format"
+        }), 400
+    except Exception as e:
+        print(f"Server error: {e}")
         return jsonify({
             "success": False,
             "error": str(e)
