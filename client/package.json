@@ -29,6 +29,7 @@
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.1.1",
     "react-toastify": "^11.0.5",
+    "recharts": "^2.15.3",
     "socket.io-client": "^4.8.1",
     "tailwind-merge": "^2.6.0",
     "web-speech": "^0.0.0"
