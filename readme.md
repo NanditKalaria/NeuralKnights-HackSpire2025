@@ -1,12 +1,14 @@
-# Project Setup Guide
+🚀 HackSpire 2025: Neural Knights Project
 
-This guide will walk you through setting up both the Python and Node.js environments for this project.
+Welcome to the Neural Knights project for HackSpire 2025! This guide will help you get up and running with our cutting-edge development environment.
 
-## Prerequisites
+🧰 Prerequisites
+Before diving in, make sure you have:
 
-- Python 3.x
-- Node.js (Latest LTS version recommended)
-- npm (Comes with Node.js)
+- Python 3.x (3.8+ recommended)
+- Node.js (LTS version 18+ recommended)
+- npm (included with Node.js)
+- Git (for version control)
 
 ## Getting Started
 
@@ -64,37 +66,41 @@ This guide will walk you through setting up both the Python and Node.js environm
    npm run dev
    ```
 
-## Project Structure
+## 📁 Project Structure
 
 ```
-project/
+neural-knights/
 ├── server/
-│   ├── flaskserver/
+│   ├── flaskserver/       # Python backend
 │   │   └── requirements.txt
-│   └── nodeserver/
+│   └── nodeserver/        # Node.js frontend
 │       ├── package.json
 │       └── ...
-└── ...
+├── models/                # ML models
+├── data/                  # Datasets
+└── docs/   
 ```
 
-## Development
+## 🖥️ Development Workflow
+- Flask Server: Handles ML model inference, data processing, and API endpoints
+- Node.js Server: Provides the user interface and frontend logic
+- Integration: Both servers communicate via RESTful API calls
 
-- The Flask server handles backend Python operations
-- The Node.js server runs the frontend development environment
 
-## Troubleshooting
 
-If you encounter any issues:
+## ⚠️Troubleshooting 
 
-1. Ensure your Python and Node.js versions are compatible with the project
-2. Check that all paths are correct for your operating system
-3. Verify that the virtual environment is activated before installing Python packages
-4. Make sure all required ports are available and not in use by other applications
+- Port conflicts: Ensure ports 3000 (Node) and 5000 (Flask) are available
+- Dependency errors: Verify your Python/Node versions match requirements
+- Path issues: Check relative paths for different operating systems
+- Virtual env problems: Ensure activation before installing packages
 
 ## Contributing
 
 Please read our contributing guidelines before submitting pull requests to the project.
 
-## License
+## 🙏 Acknowledgments
+- HackSpire 2025 organizers
+- Neural Knights team members
 
-This project is licensed under the [LICENSE NAME] - see the LICENSE file for details.
+Built with ❤️ by Neural Knights for HackSpire 2025
